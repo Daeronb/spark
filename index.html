@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e0f14">
+<title>Spark</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<header id="topbar">
+  <div class="brand">
+    <span class="brand-mark">✦</span><span class="brand-name">Spark</span>
+    <span id="poolCount" class="pool-count"></span>
+  </div>
+  <button id="btnMenu" class="icon-btn" aria-label="Menu">
+    <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/></svg>
+  </button>
+</header>
+
+<div id="chipsRow" class="chips-row" hidden></div>
+
+<main id="main">
+
+  <!-- Empty / onboarding state -->
+  <section id="viewEmpty" class="view" hidden>
+    <div class="empty-card">
+      <div class="empty-glyph">✦</div>
+      <h1>Your notes, one spark at a time</h1>
+      <p>Import your Google Keep export and Spark will surface one random note every time you tap — no walls of text, no scrolling.</p>
+      <button id="btnFirstImport" class="btn-primary">Import notes</button>
+    </div>
+  </section>
+
+  <!-- Note card -->
+  <section id="viewNote" class="view" hidden>
+    <article id="noteCard" class="note-card">
+      <div id="noteMedia" class="note-media"></div>
+      <div id="noteBody" class="note-body"></div>
+      <div id="noteMeta" class="note-meta"></div>
+    </article>
+  </section>
+
+</main>
+
+<footer id="actionBar" hidden>
+  <button id="btnFlag" class="round-btn danger" aria-label="Flag for deletion" title="Flag for deletion in Keep">
+    <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M6 21V4h9l.6 2H21v10h-7l-.6-2H8v7H6Z"/></svg>
+  </button>
+  <button id="btnNext" class="btn-next">Next spark</button>
+  <button id="btnSuspend" class="round-btn" aria-label="Suspend note" title="Suspend (remove from rotation)">
+    <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M8 5h3v14H8V5Zm5 0h3v14h-3V5Z"/></svg>
+  </button>
+</footer>
+
+<!-- Menu sheet -->
+<div id="sheetBackdrop" class="backdrop" hidden></div>
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet-handle"></div>
+  <button class="sheet-item" data-action="import">
+    <span class="sheet-ico">⬆️</span> Import / refresh notes
+    <span class="sheet-sub">from a Google Takeout zip</span>
+  </button>
+  <button class="sheet-item" data-action="suspended">
+    <span class="sheet-ico">⏸️</span> Suspended notes <span id="suspCount" class="badge">0</span>
+  </button>
+  <button class="sheet-item" data-action="flagged">
+    <span class="sheet-ico">🗑️</span> Flagged for deletion <span id="flagCount" class="badge">0</span>
+    <span class="sheet-sub">your cleanup list for Google Keep</span>
+  </button>
+  <button class="sheet-item" data-action="backup">
+    <span class="sheet-ico">💾</span> Back up app state
+    <span class="sheet-sub">suspensions, flags &amp; label selection</span>
+  </button>
+  <button class="sheet-item" data-action="restore">
+    <span class="sheet-ico">♻️</span> Restore app state
+  </button>
+  <button class="sheet-item danger" data-action="wipe">
+    <span class="sheet-ico">⚠️</span> Delete all app data
+  </button>
+  <div id="aboutStats" class="sheet-stats"></div>
+</div>
+
+<!-- List view (suspended / flagged) -->
+<div id="listView" class="overlay" hidden>
+  <div class="overlay-head">
+    <button id="btnListBack" class="icon-btn" aria-label="Back">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="m10 19-7-7 7-7 1.4 1.4L6.8 11H21v2H6.8l4.6 4.6L10 19Z"/></svg>
+    </button>
+    <h2 id="listTitle"></h2>
+    <button id="btnCopyAll" class="text-btn" hidden>Copy all</button>
+  </div>
+  <p id="listHint" class="list-hint"></p>
+  <div id="listItems" class="list-items"></div>
+</div>
+
+<!-- Import overlay -->
+<div id="importView" class="overlay" hidden>
+  <div class="overlay-head">
+    <button id="btnImportBack" class="icon-btn" aria-label="Back">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="m10 19-7-7 7-7 1.4 1.4L6.8 11H21v2H6.8l4.6 4.6L10 19Z"/></svg>
+    </button>
+    <h2>Import notes</h2>
+  </div>
+
+  <div id="importPick" class="import-step">
+    <p>Select your Google Takeout zip (Keep-only export). Everything is processed on this device — nothing is uploaded anywhere.</p>
+    <button id="btnPickZip" class="btn-primary">Choose zip file</button>
+    <input id="zipInput" type="file" accept=".zip,application/zip" hidden>
+  </div>
+
+  <div id="importProgress" class="import-step" hidden>
+    <p id="importStatus">Reading zip…</p>
+    <div class="progress"><div id="progressBar" class="progress-bar"></div></div>
+  </div>
+
+  <div id="importLabels" class="import-step" hidden>
+    <p>Pick the labels to import. You can toggle which ones are <em>shown</em> at any time later — importing extra labels costs nothing.</p>
+    <div id="labelPickList" class="label-pick-list"></div>
+    <button id="btnDoImport" class="btn-primary">Import selected</button>
+  </div>
+
+  <div id="importDone" class="import-step" hidden>
+    <div class="empty-glyph">✅</div>
+    <p id="importSummary"></p>
+    <button id="btnImportFinish" class="btn-primary">Start sparking</button>
+  </div>
+</div>
+
+<!-- Article reader -->
+<div id="readerView" class="overlay" hidden>
+  <div class="overlay-head">
+    <button id="btnReaderBack" class="icon-btn" aria-label="Back">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="m10 19-7-7 7-7 1.4 1.4L6.8 11H21v2H6.8l4.6 4.6L10 19Z"/></svg>
+    </button>
+    <h2 id="readerTitle" class="reader-title-head">Reader</h2>
+    <a id="readerOpenLive" class="text-btn" target="_blank" rel="noopener">Open live ↗</a>
+  </div>
+  <div id="readerContent" class="reader-content"></div>
+</div>
+
+<!-- Image lightbox -->
+<div id="lightbox" class="lightbox" hidden>
+  <img id="lightboxImg" alt="">
+</div>
+
+<div id="toast" class="toast" hidden>
+  <span id="toastMsg"></span>
+  <button id="toastUndo" class="text-btn" hidden>Undo</button>
+</div>
+
+<input id="stateInput" type="file" accept=".json,application/json" hidden>
+
+<script src="app.js"></script>
+</body>
+</html>
