@@ -55,6 +55,7 @@ const S = {
   mediaURLs: [],             // objectURLs to revoke on re-render
 };
 
+const APP_VERSION = "v7";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -85,7 +86,13 @@ async function init() {
   wireEvents();
   refreshHome(true);
 
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").then((reg) => { try { reg.update(); } catch {} }).catch(() => {});
+    let _reloaded = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (_reloaded) return; _reloaded = true; location.reload();
+    });
+  }
 }
 
 function pool() {
@@ -397,7 +404,7 @@ function openSheet() {
   $("suspCount").textContent = S.suspended.size;
   $("flagCount").textContent = S.flagged.size;
   $("aboutStats").textContent =
-    `${S.notes.size} notes stored · ${pool().length} in rotation · everything stays on this device`;
+    `Spark ${APP_VERSION} · ${S.notes.size} notes stored · ${pool().length} in rotation · on-device`;
   $("sheet").hidden = false; $("sheetBackdrop").hidden = false;
 }
 function closeSheet() { $("sheet").hidden = true; $("sheetBackdrop").hidden = true; }
@@ -622,7 +629,7 @@ async function scanZip(file) {
     if (i % 25 === 0) {
       const _sec = (performance.now() - _t0) / 1000;
       const _rate = _sec > 0.2 ? Math.round(i / _sec) : 0;
-      setProgress(`Scanning notes… ${i}/${jsonEntries.length} · ${_rate}/s · BUILD 5`, 0.05 + 0.55 * (i / jsonEntries.length));
+      setProgress(`Scanning notes… ${i}/${jsonEntries.length} · ${_rate}/s · BUILD 7`, 0.05 + 0.55 * (i / jsonEntries.length));
       await new Promise(r => setTimeout(r, 0));
     }
     let j;

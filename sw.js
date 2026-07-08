@@ -1,5 +1,5 @@
 /* Spark service worker — offline-first app shell */
-const CACHE = "spark-v6";
+const CACHE = "spark-v7";
 const SHELL = [
   "./",
   "./index.html",
@@ -31,19 +31,24 @@ self.addEventListener("fetch", (e) => {
   const isZipLib = url.href.includes("cdn.jsdelivr.net/npm/@zip.js");
   if (e.request.method !== "GET" || (!sameOrigin && !isZipLib)) return; // embeds, jina, twitter -> network
 
-  /* stale-while-revalidate for the shell */
-  e.respondWith(
-    caches.match(e.request).then((cached) => {
-      const fetched = fetch(e.request)
+  if (sameOrigin) {
+    /* network-first for the app shell: always get the latest when online,
+       fall back to cache when offline. */
+    e.respondWith(
+      fetch(e.request)
         .then((resp) => {
-          if (resp && resp.ok) {
-            const copy = resp.clone();
-            caches.open(CACHE).then((c) => c.put(e.request, copy));
-          }
+          if (resp && resp.ok) { const copy = resp.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); }
           return resp;
         })
-        .catch(() => cached);
-      return cached || fetched;
-    })
+        .catch(() => caches.match(e.request))
+    );
+    return;
+  }
+  /* zip library: cache-first (immutable) */
+  e.respondWith(
+    caches.match(e.request).then((cached) => cached || fetch(e.request).then((resp) => {
+      if (resp && resp.ok) { const copy = resp.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); }
+      return resp;
+    }))
   );
 });
