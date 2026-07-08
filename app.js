@@ -519,11 +519,13 @@ let _entries = null;      // Map: path -> zip entry (streaming, low memory)
 let _scanned = null;      // [{json, prefix}] parsed candidates
 
 function loadZipLib() {
-  if (window.zip) return Promise.resolve();
+  const cfg = () => { try { window.zip.configure({ useWebWorkers: false }); } catch {} };
+  if (window.zip) { cfg(); return Promise.resolve(); }
   return new Promise((res, rej) => {
     const s = document.createElement("script");
     s.src = "https://cdn.jsdelivr.net/npm/@zip.js/zip.js@2/dist/zip.min.js";
-    s.onload = res; s.onerror = () => rej(new Error("Couldn't load zip library — are you online?"));
+    s.onload = () => { cfg(); res(); };
+    s.onerror = () => rej(new Error("Couldn't load zip library — are you online?"));
     document.head.appendChild(s);
   });
 }
