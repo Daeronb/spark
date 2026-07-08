@@ -210,6 +210,47 @@ const tweetUrl = (url) => {
   const m = url.match(/https?:\/\/(?:www\.)?(?:twitter|x)\.com\/(\w+)\/status\/(\d+)/);
   return m ? `https://twitter.com/${m[1]}/status/${m[2]}` : null;
 };
+const tiktokVideoId = (url) => {
+  const m = String(url).match(/tiktok\.com\/(?:@[\w.\-]+\/video|v|embed(?:\/v2)?|player\/v1)\/(\d{6,})/i)
+        || String(url).match(/[?&]video_id=(\d{6,})/i);
+  return m ? m[1] : null;
+};
+function tiktokEmbedNode(id, url) {
+  const w = document.createElement("div");
+  w.className = "embed-wrap tt-wrap";
+  w.innerHTML =
+    `<iframe class="tt-frame" loading="lazy" src="https://www.tiktok.com/player/v1/${id}" allow="encrypted-media; fullscreen; picture-in-picture" allowfullscreen scrolling="no"></iframe>` +
+    `<div class="tt-open"><a class="text-btn" href="${esc(url)}" target="_blank" rel="noopener">Open in TikTok ↗</a></div>`;
+  return w;
+}
+async function loadTikTokShort(container, l) {
+  try {
+    const r = await fetch("https://www.tiktok.com/oembed?url=" + encodeURIComponent(l.url));
+    if (!r.ok) throw 0;
+    const d = await r.json();
+    const m = (d.html || "").match(/data-video-id="(\d{6,})"/) || (d.html || "").match(/\/video\/(\d{6,})/);
+    if (!m) throw 0;
+    container.replaceWith(tiktokEmbedNode(m[1], l.url));
+  } catch {
+    container.replaceWith(makeLinkCard(l));
+  }
+}
+function makeLinkCard(l) {
+  let host = "";
+  try { host = new URL(l.url).hostname.replace(/^www\./, ""); } catch {}
+  const card = document.createElement("div");
+  card.className = "link-card";
+  card.innerHTML =
+    (l.title ? `<div class="lc-title">${esc(l.title)}</div>` : "") +
+    (l.desc ? `<div class="lc-desc">${esc(l.desc)}</div>` : "") +
+    `<div class="lc-host">${esc(host || l.url)}</div>
+     <div class="lc-actions">
+       <button class="text-btn lc-read">Read here</button>
+       <a class="text-btn" href="${esc(l.url)}" target="_blank" rel="noopener">Open ↗</a>
+     </div>`;
+  card.querySelector(".lc-read").onclick = () => openReader(l.url, l.title || host);
+  return card;
+}
 
 async function renderNote(note) {
   // revoke previous blob URLs
@@ -255,8 +296,9 @@ async function renderNote(note) {
   /* links (embeds) */
   const seen = new Set();
   const links = [];
-  for (const l of note.links || []) { if (!seen.has(l.url)) { seen.add(l.url); links.push(l); } }
-  for (const u of extractUrls(note.text)) { if (!seen.has(u)) { seen.add(u); links.push({ url: u }); } }
+  const _k = (u) => String(u).replace(/#.*$/, "").replace(/\/+$/, "").toLowerCase();
+  for (const l of note.links || []) { const k = _k(l.url); if (!seen.has(k)) { seen.add(k); links.push(l); } }
+  for (const u of extractUrls(note.text)) { const k = _k(u); if (!seen.has(k)) { seen.add(k); links.push({ url: u }); } }
 
   const linkSec = document.createElement("div");
   linkSec.className = "link-section";
@@ -264,6 +306,8 @@ async function renderNote(note) {
   for (const l of links) {
     const yid = ytId(l.url);
     const tw = tweetUrl(l.url);
+    const ttId = tiktokVideoId(l.url);
+    const ttShort = !ttId && /(?:vm|vt)\.tiktok\.com/i.test(l.url);
     if (yid) {
       const w = document.createElement("div");
       w.className = "embed-wrap";
@@ -275,21 +319,16 @@ async function renderNote(note) {
       w.innerHTML = `<blockquote class="twitter-tweet" data-theme="dark" data-dnt="true"><a href="${esc(tw)}">${esc(tw)}</a></blockquote>`;
       linkSec.appendChild(w);
       needTwitter = true;
+    } else if (ttId) {
+      linkSec.appendChild(tiktokEmbedNode(ttId, l.url));
+    } else if (ttShort) {
+      const w = document.createElement("div");
+      w.className = "tt-loading";
+      w.textContent = "Loading TikTok…";
+      linkSec.appendChild(w);
+      loadTikTokShort(w, l);
     } else {
-      let host = "";
-      try { host = new URL(l.url).hostname.replace(/^www\./, ""); } catch {}
-      const card = document.createElement("div");
-      card.className = "link-card";
-      card.innerHTML =
-        (l.title ? `<div class="lc-title">${esc(l.title)}</div>` : "") +
-        (l.desc ? `<div class="lc-desc">${esc(l.desc)}</div>` : "") +
-        `<div class="lc-host">${esc(host || l.url)}</div>
-         <div class="lc-actions">
-           <button class="text-btn lc-read">Read here</button>
-           <a class="text-btn" href="${esc(l.url)}" target="_blank" rel="noopener">Open ↗</a>
-         </div>`;
-      card.querySelector(".lc-read").onclick = () => openReader(l.url, l.title || host);
-      linkSec.appendChild(card);
+      linkSec.appendChild(makeLinkCard(l));
     }
   }
   const oldSec = $("noteCard").querySelector(".link-section");

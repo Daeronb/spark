@@ -298,3 +298,9 @@ html, body {
 @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 10px); } }
 
 .view[hidden], .overlay[hidden], .sheet[hidden], .backdrop[hidden], .lightbox[hidden], .toast[hidden], .chips-row[hidden], #actionBar[hidden] { display: none !important; }
+
+/* TikTok embed */
+.tt-wrap { background: transparent; overflow: visible; }
+.tt-frame { width: 100%; max-width: 330px; aspect-ratio: 9 / 16; border: 0; border-radius: 14px; display: block; margin: 0 auto; background: #000; }
+.tt-open { text-align: center; margin-top: 6px; }
+.tt-loading { padding: 16px; text-align: center; color: var(--text-dim); font-size: 13.5px; }
