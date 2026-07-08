@@ -553,8 +553,20 @@ async function scanZip(file) {
   setProgress("Loading zip library…", 0.02);
   await loadZipLib();
   await closeZip();
-  setProgress("Reading zip index (streams from the file — big exports are fine)…", 0.05);
-  _reader = new window.zip.ZipReader(new window.zip.BlobReader(file));
+  /* Load the whole zip into RAM once, then read entries from memory.
+     Random-access reads on a multi-GB File are very slow on phones
+     (~hundreds of ms each); in-memory reads are instant. Falls back to
+     streaming from the File on low-memory devices. */
+  let _src;
+  try {
+    setProgress("Loading zip into memory (one-time — a few seconds)…", 0.03);
+    const buf = await file.arrayBuffer();
+    _src = new window.zip.Uint8ArrayReader(new Uint8Array(buf));
+  } catch (memErr) {
+    _src = new window.zip.BlobReader(file);
+  }
+  setProgress("Reading zip index…", 0.05);
+  _reader = new window.zip.ZipReader(_src);
   const all = await _reader.getEntries();
   _entries = new Map();
   for (const e of all) if (!e.directory) _entries.set(e.filename, e);
@@ -571,7 +583,7 @@ async function scanZip(file) {
     if (i % 25 === 0) {
       const _sec = (performance.now() - _t0) / 1000;
       const _rate = _sec > 0.2 ? Math.round(i / _sec) : 0;
-      setProgress(`Scanning notes… ${i}/${jsonEntries.length} · ${_rate}/s · BUILD 4`, 0.05 + 0.55 * (i / jsonEntries.length));
+      setProgress(`Scanning notes… ${i}/${jsonEntries.length} · ${_rate}/s · BUILD 5`, 0.05 + 0.55 * (i / jsonEntries.length));
       await new Promise(r => setTimeout(r, 0));
     }
     let j;
