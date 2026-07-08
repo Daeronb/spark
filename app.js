@@ -566,9 +566,12 @@ async function scanZip(file) {
 
   _scanned = [];
   const labelCount = {};
+  const _t0 = performance.now();
   for (let i = 0; i < jsonEntries.length; i++) {
     if (i % 25 === 0) {
-      setProgress(`Scanning notes… ${i}/${jsonEntries.length}`, 0.05 + 0.55 * (i / jsonEntries.length));
+      const _sec = (performance.now() - _t0) / 1000;
+      const _rate = _sec > 0.2 ? Math.round(i / _sec) : 0;
+      setProgress(`Scanning notes… ${i}/${jsonEntries.length} · ${_rate}/s · BUILD 4`, 0.05 + 0.55 * (i / jsonEntries.length));
       await new Promise(r => setTimeout(r, 0));
     }
     let j;
