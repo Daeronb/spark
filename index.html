@@ -186,6 +186,22 @@
   </div>
 </div>
 
+<!-- Loadout slot editor -->
+<div id="slotBackdrop" class="backdrop" hidden></div>
+<div id="slotSheet" class="sheet" hidden>
+  <div class="sheet-handle"></div>
+  <h3 id="slotTitle" class="anno-head">Loadout 1</h3>
+  <p id="slotInfo" class="slot-info"></p>
+  <input id="slotName" class="slot-name" type="text" maxlength="24" placeholder="Name this loadout… (e.g. Confidence)">
+  <div class="anno-actions">
+    <button id="slotClear" class="text-btn danger-text" hidden>Clear slot</button>
+    <div class="slot-btns">
+      <button id="slotSaveName" class="text-btn" hidden>Rename only</button>
+      <button id="slotSaveAll" class="btn-primary anno-save">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Image lightbox -->
 <div id="lightbox" class="lightbox" hidden>
   <img id="lightboxImg" alt="">

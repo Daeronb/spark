@@ -58,11 +58,12 @@ const S = {
   favourites: [],            // ordered ids — hard cap 20, stays a shortlist
   annotations: {},           // id -> your own note text
   loadouts: [null, null, null], // 3 saved label combos (arrays) or null
+  loadoutNames: [null, null, null], // custom slot names (or null = "Loadout n")
   viewHistory: [],           // last 50 viewed note ids, most recent first
   chipsWrap: false,          // label chips: one scrolling line (false) or full wrap (true)
 };
 
-const APP_VERSION = "v11";
+const APP_VERSION = "v12";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -79,12 +80,13 @@ async function saveKV(key, val) { await idbPut("kv", val, key); }
 window.addEventListener("DOMContentLoaded", init);
 async function init() {
   _db = await openDB();
-  const [susp, flag, act, imp, seen, boost, favs, annos, louts, vhist, cwrap] = await Promise.all([
+  const [susp, flag, act, imp, seen, boost, favs, annos, louts, vhist, cwrap, lnames] = await Promise.all([
     idbGet("kv", "suspended"), idbGet("kv", "flagged"),
     idbGet("kv", "activeLabels"), idbGet("kv", "importedLabels"),
     idbGet("kv", "seenCounts"), idbGet("kv", "boosted"),
     idbGet("kv", "favourites"), idbGet("kv", "annotations"),
     idbGet("kv", "loadouts"), idbGet("kv", "viewHistory"), idbGet("kv", "chipsWrap"),
+    idbGet("kv", "loadoutNames"),
   ]);
   S.suspended = new Set(susp || []);
   S.seen = seen || {};
@@ -92,6 +94,7 @@ async function init() {
   S.favourites = favs || [];
   S.annotations = annos || {};
   S.loadouts = Array.isArray(louts) && louts.length === 3 ? louts : [null, null, null];
+  S.loadoutNames = Array.isArray(lnames) && lnames.length === 3 ? lnames : [null, null, null];
   S.viewHistory = vhist || [];
   S.chipsWrap = !!cwrap;
   S.flagged = new Set(flag || []);
@@ -163,24 +166,62 @@ function labelCounts() {
   return counts;
 }
 /* ---- loadouts: 3 quick slots for label combos ----
-   Tap a slot = apply its saved combo (or save current selection if empty).
-   Hold a slot ~0.6s = save/overwrite it with the current selection. */
+   Tap a slot = apply its saved combo (empty slot opens the editor).
+   Hold a slot ~0.6s = open the editor (rename / overwrite / clear). */
 const sameSet = (arr, set) => Array.isArray(arr) && arr.length === set.size && arr.every(x => set.has(x));
+const slotName = (i) => (S.loadoutNames[i] || "").trim() || `Loadout ${i + 1}`;
 
-async function saveLoadout(i) {
-  if (!S.activeLabels.size) { toast("Select some labels first, then hold to save"); return; }
-  S.loadouts[i] = [...S.activeLabels];
-  await saveKV("loadouts", S.loadouts);
-  toast(`Loadout ${i + 1} saved (${S.loadouts[i].length} label${S.loadouts[i].length === 1 ? "" : "s"})`);
-  renderChips();
-}
 async function applyLoadout(i) {
   const lo = S.loadouts[i];
-  if (!lo) { saveLoadout(i); return; } // empty slot: first tap saves current selection
+  if (!lo) { openSlotSheet(i); return; }
   S.activeLabels = new Set(lo);
   await saveKV("activeLabels", [...S.activeLabels]);
-  toast(`Loadout ${i + 1} applied`);
+  toast(`${slotName(i)} applied`);
   refreshHome(false);
+}
+
+/* slot editor sheet */
+let _slotIdx = 0;
+function openSlotSheet(i) {
+  _slotIdx = i;
+  const lo = S.loadouts[i];
+  const cur = S.activeLabels.size;
+  $("slotTitle").textContent = slotName(i);
+  $("slotInfo").textContent = lo
+    ? `Saved: ${lo.join(", ")}`
+    : `Empty slot — saving stores your current selection (${cur} label${cur === 1 ? "" : "s"}).`;
+  $("slotName").value = S.loadoutNames[i] || "";
+  $("slotSaveName").hidden = !lo;
+  $("slotClear").hidden = !lo;
+  $("slotSaveAll").textContent = lo ? "Save name + current labels" : "Save";
+  $("slotSheet").hidden = false; $("slotBackdrop").hidden = false;
+}
+function closeSlotSheet() { $("slotSheet").hidden = true; $("slotBackdrop").hidden = true; }
+async function persistSlots() {
+  await Promise.all([saveKV("loadouts", S.loadouts), saveKV("loadoutNames", S.loadoutNames)]);
+}
+async function saveSlotAll() {
+  const i = _slotIdx;
+  if (!S.activeLabels.size) { toast("Select some labels first"); return; }
+  S.loadouts[i] = [...S.activeLabels];
+  S.loadoutNames[i] = $("slotName").value.trim() || null;
+  await persistSlots();
+  closeSlotSheet(); renderChips();
+  toast(`${slotName(i)} saved (${S.loadouts[i].length} label${S.loadouts[i].length === 1 ? "" : "s"})`);
+}
+async function saveSlotNameOnly() {
+  const i = _slotIdx;
+  S.loadoutNames[i] = $("slotName").value.trim() || null;
+  await persistSlots();
+  closeSlotSheet(); renderChips();
+  toast(`Renamed to “${slotName(i)}”`);
+}
+async function clearSlot() {
+  const i = _slotIdx;
+  S.loadouts[i] = null; S.loadoutNames[i] = null;
+  await persistSlots();
+  closeSlotSheet(); renderChips();
+  toast("Slot cleared");
 }
 /* shared tap-vs-hold wiring: hold ~0.6s triggers onHold, otherwise onTap */
 function wireHold(b, onTap, onHold) {
@@ -198,9 +239,9 @@ function makeSlotBtn(i) {
   const b = document.createElement("button");
   const lo = S.loadouts[i];
   b.className = "chip chip-slot" + (lo ? "" : " empty") + (lo && sameSet(lo, S.activeLabels) ? " active" : "");
-  b.textContent = `Loadout ${i + 1}`;
-  b.title = lo ? `${lo.join(", ")} — tap to apply, hold to overwrite` : `Empty — tap or hold to save current selection`;
-  wireHold(b, () => applyLoadout(i), () => saveLoadout(i));
+  b.textContent = slotName(i);
+  b.title = lo ? `${lo.join(", ")} — tap to apply, hold to rename/edit` : `Empty — tap to set up`;
+  wireHold(b, () => applyLoadout(i), () => openSlotSheet(i));
   return b;
 }
 function makeAllOffBtn() {
@@ -705,10 +746,12 @@ async function openList(mode) {
       };
       actions.append(bView, bRemove);
     } else if (mode === "history") {
-      const bView = document.createElement("button");
-      bView.className = "text-btn"; bView.textContent = "View";
-      bView.onclick = () => { $("listView").hidden = true; showNote(id, "next"); };
-      actions.append(bView);
+      /* whole row is tappable */
+      item.classList.add("tappable");
+      const chev = document.createElement("span");
+      chev.className = "li-chev"; chev.textContent = "›";
+      actions.append(chev);
+      item.onclick = () => { $("listView").hidden = true; showNote(id, "next"); };
     } else {
       const bRestore = document.createElement("button");
       bRestore.className = "text-btn"; bRestore.textContent = "Restore";
@@ -734,7 +777,7 @@ function downloadBackup() {
     activeLabels: [...S.activeLabels], importedLabels: S.importedLabels,
     boosted: [...S.boosted], seenCounts: S.seen,
     favourites: [...S.favourites], annotations: S.annotations,
-    loadouts: S.loadouts, viewHistory: S.viewHistory,
+    loadouts: S.loadouts, loadoutNames: S.loadoutNames, viewHistory: S.viewHistory,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
@@ -757,6 +800,8 @@ async function restoreBackup(file) {
     if (data.activeLabels) S.activeLabels = new Set(data.activeLabels);
     if (Array.isArray(data.loadouts) && data.loadouts.length === 3)
       S.loadouts = S.loadouts.map((cur, i) => cur || data.loadouts[i]);
+    if (Array.isArray(data.loadoutNames) && data.loadoutNames.length === 3)
+      S.loadoutNames = S.loadoutNames.map((cur, i) => cur || data.loadoutNames[i]);
     if (Array.isArray(data.viewHistory) && !S.viewHistory.length)
       S.viewHistory = data.viewHistory.slice(0, 50);
     await Promise.all([
@@ -764,7 +809,8 @@ async function restoreBackup(file) {
       saveKV("activeLabels", [...S.activeLabels]),
       saveKV("boosted", [...S.boosted]), saveKV("seenCounts", S.seen),
       saveKV("favourites", S.favourites), saveKV("annotations", S.annotations),
-      saveKV("loadouts", S.loadouts), saveKV("viewHistory", S.viewHistory),
+      saveKV("loadouts", S.loadouts), saveKV("loadoutNames", S.loadoutNames),
+      saveKV("viewHistory", S.viewHistory),
     ]);
     refreshHome(true);
     toast("Backup restored");
@@ -922,7 +968,7 @@ async function scanZip(file) {
     if (i % 25 === 0) {
       const _sec = (performance.now() - _t0) / 1000;
       const _rate = _sec > 0.2 ? Math.round(i / _sec) : 0;
-      setProgress(`Scanning notes… ${i}/${jsonEntries.length} · ${_rate}/s · BUILD 11`, 0.05 + 0.55 * (i / jsonEntries.length));
+      setProgress(`Scanning notes… ${i}/${jsonEntries.length} · ${_rate}/s · BUILD 12`, 0.05 + 0.55 * (i / jsonEntries.length));
       await new Promise(r => setTimeout(r, 0));
     }
     let j;
@@ -1061,6 +1107,10 @@ function wireEvents() {
   $("annoSave").onclick = saveAnno;
   $("annoDelete").onclick = () => { $("annoText").value = ""; saveAnno(); };
   $("annoBackdrop").onclick = closeAnno;
+  $("slotBackdrop").onclick = closeSlotSheet;
+  $("slotSaveAll").onclick = saveSlotAll;
+  $("slotSaveName").onclick = saveSlotNameOnly;
+  $("slotClear").onclick = clearSlot;
   $("btnSuspend").onclick = () => suspendCurrent(false);
   $("btnFlag").onclick = () => suspendCurrent(true);
   $("btnMenu").onclick = openSheet;
@@ -1125,9 +1175,9 @@ function wireEvents() {
   /* keyboard (desktop testing) */
   document.addEventListener("keydown", (e) => {
     if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" ||
-        !$("importView").hidden || !$("readerView").hidden || !$("annoSheet").hidden) return;
+        !$("importView").hidden || !$("readerView").hidden || !$("annoSheet").hidden || !$("slotSheet").hidden) return;
     if (e.key === " " || e.key === "ArrowRight") { e.preventDefault(); nextNote(); }
     if (e.key === "ArrowLeft") prevNote();
   });
 }
-/* eof — v11 */
+/* eof — v12 */
