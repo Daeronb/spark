@@ -11,9 +11,9 @@ PWA that resurfaces Google Keep notes one random note per tap. All data stays on
 ## Files
 - `index.html` / `app.css` / `app.js` — the whole app (no build step)
 - `sw.js` + `manifest.webmanifest` + `icons/` — PWA install & offline
-- `takeout-20260708T101848Z-3-001.zip` — Joël's real Keep export (1.1 GB, 8,495 notes).
-  **PERSONAL DATA — never upload to GitHub.** Only the app files go in the repo.
-- `test-data-synthetic-takeout.zip` — tiny fake export for testing the import flow
+- Takeout zips live OUTSIDE this folder in `../_data/spark/` (personal data, kept out of
+  the repo by keeping them out of this folder). This folder holds ONLY app files, so it can
+  be uploaded to GitHub directly.
 
 ## Architecture notes
 - Import: zip.js (streaming BlobReader, loaded from jsdelivr) — handles the raw 1 GB+ zip

@@ -178,6 +178,7 @@ html, body {
 }
 .round-btn:active { background: #ffffff14; }
 .round-btn.danger { color: var(--danger); }
+.round-btn.boost-on { color: var(--accent1); border-color: #ffb34766; background: #ffb34718; }
 
 /* ---------- Empty state ---------- */
 .empty-card { text-align: center; padding: 12vh 12px 0; max-width: 420px; margin: 0 auto; }

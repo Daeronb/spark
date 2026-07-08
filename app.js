@@ -53,9 +53,11 @@ const S = {
   history: [],
   lastAction: null,          // {type, id} for undo
   mediaURLs: [],             // objectURLs to revoke on re-render
+  seen: {},                  // id -> times shown (drives soft weighting)
+  boosted: new Set(),        // ids the user boosted (higher draw weight)
 };
 
-const APP_VERSION = "v7";
+const APP_VERSION = "v8";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -72,11 +74,14 @@ async function saveKV(key, val) { await idbPut("kv", val, key); }
 window.addEventListener("DOMContentLoaded", init);
 async function init() {
   _db = await openDB();
-  const [susp, flag, act, imp] = await Promise.all([
+  const [susp, flag, act, imp, seen, boost] = await Promise.all([
     idbGet("kv", "suspended"), idbGet("kv", "flagged"),
     idbGet("kv", "activeLabels"), idbGet("kv", "importedLabels"),
+    idbGet("kv", "seenCounts"), idbGet("kv", "boosted"),
   ]);
   S.suspended = new Set(susp || []);
+  S.seen = seen || {};
+  S.boosted = new Set(boost || []);
   S.flagged = new Set(flag || []);
   S.activeLabels = new Set(act || []);
   S.importedLabels = imp || [];
@@ -102,6 +107,24 @@ function pool() {
     if (n.labels.some(l => S.activeLabels.has(l))) out.push(n.id);
   }
   return out;
+}
+
+/* Soft weighting: unseen notes are only modestly favored (max 4:1 vs a
+   heavily-seen note), so rotation stays random — it just keeps notes from
+   hiding for months. Boost multiplies a note's weight x5. */
+function noteWeight(id) {
+  let w = 1 / (1 + Math.min(S.seen[id] || 0, 3));
+  if (S.boosted.has(id)) w *= 5;
+  return w;
+}
+function weightedPick(ids) {
+  let total = 0;
+  const cum = new Array(ids.length);
+  for (let i = 0; i < ids.length; i++) { total += noteWeight(ids[i]); cum[i] = total; }
+  const r = Math.random() * total;
+  let lo = 0, hi = ids.length - 1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (cum[mid] > r) hi = mid; else lo = mid + 1; }
+  return ids[lo];
 }
 
 function refreshHome(fresh) {
@@ -155,11 +178,14 @@ function nextNote(animate = true) {
     $("noteMeta").innerHTML = "";
     $("noteBody").innerHTML = `<p style="color:var(--text-dim);text-align:center;padding:30px 0">
       ${S.activeLabels.size ? "Nothing in rotation — all notes here are suspended." : "Select at least one label above to start."}</p>`;
+    updateBoostBtn();
     return;
   }
   let id;
   if (p.length === 1) id = p[0];
-  else do { id = p[Math.floor(Math.random() * p.length)]; } while (id === S.currentId);
+  else id = weightedPick(S.currentId ? p.filter(x => x !== S.currentId) : p);
+  S.seen[id] = (S.seen[id] || 0) + 1;
+  saveKV("seenCounts", S.seen);
   if (S.currentId) { S.history.push(S.currentId); if (S.history.length > 50) S.history.shift(); }
   showNote(id, animate ? "next" : null);
 }
@@ -169,6 +195,7 @@ function prevNote() {
 }
 function showNote(id, anim) {
   S.currentId = id;
+  updateBoostBtn();
   const card = $("noteCard");
   if (anim) {
     card.classList.add("leaving");
@@ -389,6 +416,24 @@ async function undoLast() {
   showNote(a.id, "prev");
 }
 
+/* ---------------- boost (higher draw weight, not a list) ---------------- */
+async function toggleBoost() {
+  const id = S.currentId;
+  if (!id) return;
+  if (S.boosted.has(id)) {
+    S.boosted.delete(id);
+    toast("Boost removed");
+  } else {
+    S.boosted.add(id);
+    toast("Boosted — this note will spark more often");
+  }
+  await saveKV("boosted", [...S.boosted]);
+  updateBoostBtn();
+}
+function updateBoostBtn() {
+  $("btnBoost").classList.toggle("boost-on", !!(S.currentId && S.boosted.has(S.currentId)));
+}
+
 let _toastTimer = null;
 function toast(msg, undoable = false) {
   $("toastMsg").textContent = msg;
@@ -404,7 +449,7 @@ function openSheet() {
   $("suspCount").textContent = S.suspended.size;
   $("flagCount").textContent = S.flagged.size;
   $("aboutStats").textContent =
-    `Spark ${APP_VERSION} · ${S.notes.size} notes stored · ${pool().length} in rotation · on-device`;
+    `Spark ${APP_VERSION} · ${S.notes.size} notes stored · ${pool().length} in rotation · ${S.boosted.size} boosted · on-device`;
   $("sheet").hidden = false; $("sheetBackdrop").hidden = false;
 }
 function closeSheet() { $("sheet").hidden = true; $("sheetBackdrop").hidden = true; }
@@ -479,6 +524,7 @@ function downloadBackup() {
     app: "spark", v: 1, date: new Date().toISOString(),
     suspended: [...S.suspended], flagged: [...S.flagged],
     activeLabels: [...S.activeLabels], importedLabels: S.importedLabels,
+    boosted: [...S.boosted], seenCounts: S.seen,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
@@ -493,10 +539,13 @@ async function restoreBackup(file) {
     if (data.app !== "spark") throw new Error("not a spark backup");
     for (const id of data.suspended || []) S.suspended.add(id);
     for (const id of data.flagged || []) S.flagged.add(id);
+    for (const id of data.boosted || []) S.boosted.add(id);
+    if (data.seenCounts) S.seen = Object.assign({}, data.seenCounts, S.seen);
     if (data.activeLabels) S.activeLabels = new Set(data.activeLabels);
     await Promise.all([
       saveKV("suspended", [...S.suspended]), saveKV("flagged", [...S.flagged]),
       saveKV("activeLabels", [...S.activeLabels]),
+      saveKV("boosted", [...S.boosted]), saveKV("seenCounts", S.seen),
     ]);
     refreshHome(true);
     toast("Backup restored");
@@ -761,6 +810,7 @@ async function wipeAll() {
 /* ---------------- events ---------------- */
 function wireEvents() {
   $("btnNext").onclick = () => nextNote();
+  $("btnBoost").onclick = toggleBoost;
   $("btnSuspend").onclick = () => suspendCurrent(false);
   $("btnFlag").onclick = () => suspendCurrent(true);
   $("btnMenu").onclick = openSheet;
