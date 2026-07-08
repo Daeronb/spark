@@ -1,5 +1,5 @@
 /* Spark service worker — offline-first app shell */
-const CACHE = "spark-v9";
+const CACHE = "spark-v10";
 const SHELL = [
   "./",
   "./index.html",

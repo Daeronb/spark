@@ -57,9 +57,11 @@ const S = {
   boosted: new Set(),        // ids the user boosted (higher draw weight)
   favourites: [],            // ordered ids — hard cap 20, stays a shortlist
   annotations: {},           // id -> your own note text
+  loadouts: [null, null, null], // 3 saved label combos (arrays) or null
+  viewHistory: [],           // last 50 viewed note ids, most recent first
 };
 
-const APP_VERSION = "v9";
+const APP_VERSION = "v10";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -76,17 +78,20 @@ async function saveKV(key, val) { await idbPut("kv", val, key); }
 window.addEventListener("DOMContentLoaded", init);
 async function init() {
   _db = await openDB();
-  const [susp, flag, act, imp, seen, boost, favs, annos] = await Promise.all([
+  const [susp, flag, act, imp, seen, boost, favs, annos, louts, vhist] = await Promise.all([
     idbGet("kv", "suspended"), idbGet("kv", "flagged"),
     idbGet("kv", "activeLabels"), idbGet("kv", "importedLabels"),
     idbGet("kv", "seenCounts"), idbGet("kv", "boosted"),
     idbGet("kv", "favourites"), idbGet("kv", "annotations"),
+    idbGet("kv", "loadouts"), idbGet("kv", "viewHistory"),
   ]);
   S.suspended = new Set(susp || []);
   S.seen = seen || {};
   S.boosted = new Set(boost || []);
   S.favourites = favs || [];
   S.annotations = annos || {};
+  S.loadouts = Array.isArray(louts) && louts.length === 3 ? louts : [null, null, null];
+  S.viewHistory = vhist || [];
   S.flagged = new Set(flag || []);
   S.activeLabels = new Set(act || []);
   S.importedLabels = imp || [];
@@ -154,10 +159,49 @@ function labelCounts() {
     for (const l of n.labels) counts[l] = (counts[l] || 0) + 1;
   return counts;
 }
+/* ---- loadouts: 3 quick slots for label combos ----
+   Tap a slot = apply its saved combo (or save current selection if empty).
+   Hold a slot ~0.6s = save/overwrite it with the current selection. */
+const sameSet = (arr, set) => Array.isArray(arr) && arr.length === set.size && arr.every(x => set.has(x));
+
+async function saveLoadout(i) {
+  if (!S.activeLabels.size) { toast("Select some labels first, then hold to save"); return; }
+  S.loadouts[i] = [...S.activeLabels];
+  await saveKV("loadouts", S.loadouts);
+  toast(`Loadout ${i + 1} saved (${S.loadouts[i].length} label${S.loadouts[i].length === 1 ? "" : "s"})`);
+  renderChips();
+}
+async function applyLoadout(i) {
+  const lo = S.loadouts[i];
+  if (!lo) { saveLoadout(i); return; } // empty slot: first tap saves current selection
+  S.activeLabels = new Set(lo);
+  await saveKV("activeLabels", [...S.activeLabels]);
+  toast(`Loadout ${i + 1} applied`);
+  refreshHome(false);
+}
+function makeSlotBtn(i) {
+  const b = document.createElement("button");
+  const lo = S.loadouts[i];
+  b.className = "chip chip-slot" + (lo ? "" : " empty") + (lo && sameSet(lo, S.activeLabels) ? " active" : "");
+  b.textContent = String(i + 1);
+  b.title = lo ? `Loadout ${i + 1}: ${lo.join(", ")} — hold to overwrite` : `Empty — tap or hold to save current selection`;
+  let timer = null, held = false;
+  const start = () => { held = false; timer = setTimeout(() => { held = true; saveLoadout(i); }, 600); };
+  const cancel = () => clearTimeout(timer);
+  b.onpointerdown = start;
+  b.onpointerup = () => { cancel(); if (!held) applyLoadout(i); };
+  b.onpointerleave = cancel;
+  b.onpointercancel = cancel;
+  b.oncontextmenu = (e) => e.preventDefault(); // no long-press menu on Android
+  b.onclick = (e) => e.preventDefault();       // handled via pointer events
+  return b;
+}
+
 function renderChips() {
   const counts = labelCounts();
   const row = $("chipsRow");
   row.innerHTML = "";
+  for (let i = 0; i < 3; i++) row.appendChild(makeSlotBtn(i));
   const names = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
   for (const name of names) {
     const b = document.createElement("button");
@@ -198,8 +242,17 @@ function prevNote() {
   const id = S.history.pop();
   if (id && S.notes.has(id)) showNote(id, "prev");
 }
+function recordViewed(id) {
+  const i = S.viewHistory.indexOf(id);
+  if (i === 0) return;                       // already most recent
+  if (i > 0) S.viewHistory.splice(i, 1);
+  S.viewHistory.unshift(id);
+  if (S.viewHistory.length > 50) S.viewHistory.length = 50;
+  saveKV("viewHistory", S.viewHistory);
+}
 function showNote(id, anim) {
   S.currentId = id;
+  recordViewed(id);
   updateCardTools();
   const card = $("noteCard");
   if (anim) {
@@ -504,6 +557,7 @@ function hideToast() { $("toast").hidden = true; }
 function openSheet() {
   $("suspCount").textContent = S.suspended.size;
   $("flagCount").textContent = S.flagged.size;
+  $("histCount").textContent = S.viewHistory.length;
   $("favCount").textContent = `${S.favourites.length}/${FAV_MAX}`;
   $("aboutStats").textContent =
     `Spark ${APP_VERSION} · ${S.notes.size} notes stored · ${pool().length} in rotation · ${S.boosted.size} boosted · on-device`;
@@ -518,13 +572,17 @@ function noteSnippet(n) {
 }
 async function openList(mode) {
   closeSheet();
-  const ids = mode === "flagged" ? [...S.flagged] : mode === "favourites" ? [...S.favourites] : [...S.suspended];
+  const ids = mode === "flagged" ? [...S.flagged] : mode === "favourites" ? [...S.favourites]
+    : mode === "history" ? [...S.viewHistory] : [...S.suspended];
   $("listTitle").textContent = mode === "flagged" ? "Flagged for deletion"
-    : mode === "favourites" ? `Favourites (${S.favourites.length}/${FAV_MAX})` : "Suspended notes";
+    : mode === "favourites" ? `Favourites (${S.favourites.length}/${FAV_MAX})`
+    : mode === "history" ? "Recently viewed" : "Suspended notes";
   $("listHint").textContent = mode === "flagged"
     ? "These are suspended here AND on your cleanup list. Copy a note's text, search it in Google Keep, delete it there, then tap ✓ Done. Notes stay hidden in Spark either way."
     : mode === "favourites"
     ? "Your hand-picked best-of — capped at 20 so it stays a shortlist, not another endless list."
+    : mode === "history"
+    ? "The last 50 notes you've seen, newest first — for finding that spark you didn't favourite in time."
     : "Suspended notes never appear in rotation — even after future imports. Restore puts one back.";
   $("btnCopyAll").hidden = mode !== "flagged";
   const wrap = $("listItems");
@@ -576,6 +634,11 @@ async function openList(mode) {
         toast(`Removed (${S.favourites.length}/${FAV_MAX})`);
       };
       actions.append(bView, bRemove);
+    } else if (mode === "history") {
+      const bView = document.createElement("button");
+      bView.className = "text-btn"; bView.textContent = "View";
+      bView.onclick = () => { $("listView").hidden = true; showNote(id, "next"); };
+      actions.append(bView);
     } else {
       const bRestore = document.createElement("button");
       bRestore.className = "text-btn"; bRestore.textContent = "Restore";
@@ -601,6 +664,7 @@ function downloadBackup() {
     activeLabels: [...S.activeLabels], importedLabels: S.importedLabels,
     boosted: [...S.boosted], seenCounts: S.seen,
     favourites: [...S.favourites], annotations: S.annotations,
+    loadouts: S.loadouts, viewHistory: S.viewHistory,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
@@ -621,11 +685,16 @@ async function restoreBackup(file) {
     if (data.annotations) S.annotations = Object.assign({}, data.annotations, S.annotations);
     if (data.seenCounts) S.seen = Object.assign({}, data.seenCounts, S.seen);
     if (data.activeLabels) S.activeLabels = new Set(data.activeLabels);
+    if (Array.isArray(data.loadouts) && data.loadouts.length === 3)
+      S.loadouts = S.loadouts.map((cur, i) => cur || data.loadouts[i]);
+    if (Array.isArray(data.viewHistory) && !S.viewHistory.length)
+      S.viewHistory = data.viewHistory.slice(0, 50);
     await Promise.all([
       saveKV("suspended", [...S.suspended]), saveKV("flagged", [...S.flagged]),
       saveKV("activeLabels", [...S.activeLabels]),
       saveKV("boosted", [...S.boosted]), saveKV("seenCounts", S.seen),
       saveKV("favourites", S.favourites), saveKV("annotations", S.annotations),
+      saveKV("loadouts", S.loadouts), saveKV("viewHistory", S.viewHistory),
     ]);
     refreshHome(true);
     toast("Backup restored");
@@ -783,7 +852,7 @@ async function scanZip(file) {
     if (i % 25 === 0) {
       const _sec = (performance.now() - _t0) / 1000;
       const _rate = _sec > 0.2 ? Math.round(i / _sec) : 0;
-      setProgress(`Scanning notes… ${i}/${jsonEntries.length} · ${_rate}/s · BUILD 9`, 0.05 + 0.55 * (i / jsonEntries.length));
+      setProgress(`Scanning notes… ${i}/${jsonEntries.length} · ${_rate}/s · BUILD 10`, 0.05 + 0.55 * (i / jsonEntries.length));
       await new Promise(r => setTimeout(r, 0));
     }
     let j;
@@ -956,6 +1025,7 @@ function wireEvents() {
       else if (a === "backup") { closeSheet(); downloadBackup(); }
       else if (a === "restore") { closeSheet(); $("stateInput").click(); }
       else if (a === "favourites") openList("favourites");
+      else if (a === "history") openList("history");
       else if (a === "update") { closeSheet(); checkForUpdates(); }
       else if (a === "wipe") { closeSheet(); wipeAll(); }
     };
@@ -989,4 +1059,4 @@ function wireEvents() {
     if (e.key === "ArrowLeft") prevNote();
   });
 }
-/* eof */
+/* eof — v10 */
