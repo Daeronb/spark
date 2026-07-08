@@ -39,6 +39,14 @@
   <!-- Note card -->
   <section id="viewNote" class="view" hidden>
     <article id="noteCard" class="note-card">
+      <div class="card-tools">
+        <button id="btnFav" class="card-tool" aria-label="Add to favourites" title="Favourite (max 20)">
+          <svg viewBox="0 0 24 24" width="19" height="19"><path fill="currentColor" d="m12 17.3-5.4 3.2 1.4-6.1-4.7-4.1 6.2-.5L12 4l2.5 5.8 6.2.5-4.7 4.1 1.4 6.1L12 17.3Z"/></svg>
+        </button>
+        <button id="btnAnno" class="card-tool" aria-label="Your note" title="Add your own note">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25ZM20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>
+        </button>
+      </div>
       <div id="noteMedia" class="note-media"></div>
       <div id="noteBody" class="note-body"></div>
       <div id="noteMeta" class="note-meta"></div>
@@ -75,12 +83,20 @@
     <span class="sheet-ico">🗑️</span> Flagged for deletion <span id="flagCount" class="badge">0</span>
     <span class="sheet-sub">your cleanup list for Google Keep</span>
   </button>
+  <button class="sheet-item" data-action="favourites">
+    <span class="sheet-ico">⭐</span> Favourites <span id="favCount" class="badge">0/20</span>
+    <span class="sheet-sub">your best-of — max 20, so it stays special</span>
+  </button>
   <button class="sheet-item" data-action="backup">
     <span class="sheet-ico">💾</span> Back up app state
-    <span class="sheet-sub">suspensions, flags, boosts &amp; label selection</span>
+    <span class="sheet-sub">suspensions, flags, boosts, favourites, notes &amp; labels</span>
   </button>
   <button class="sheet-item" data-action="restore">
     <span class="sheet-ico">♻️</span> Restore app state
+  </button>
+  <button class="sheet-item" data-action="update">
+    <span class="sheet-ico">🔄</span> Check for updates
+    <span class="sheet-sub">fetch the newest version right now</span>
   </button>
   <button class="sheet-item danger" data-action="wipe">
     <span class="sheet-ico">⚠️</span> Delete all app data
@@ -144,6 +160,18 @@
     <a id="readerOpenLive" class="text-btn" target="_blank" rel="noopener">Open live ↗</a>
   </div>
   <div id="readerContent" class="reader-content"></div>
+</div>
+
+<!-- Annotation editor -->
+<div id="annoBackdrop" class="backdrop" hidden></div>
+<div id="annoSheet" class="sheet" hidden>
+  <div class="sheet-handle"></div>
+  <h3 class="anno-head">✎ Your note on this spark</h3>
+  <textarea id="annoText" class="anno-text" rows="5" placeholder="Add your own thought to this note…"></textarea>
+  <div class="anno-actions">
+    <button id="annoDelete" class="text-btn danger-text" hidden>Delete</button>
+    <button id="annoSave" class="btn-primary anno-save">Save</button>
+  </div>
 </div>
 
 <!-- Image lightbox -->

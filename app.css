@@ -305,3 +305,38 @@ html, body {
 .tt-frame { width: 100%; max-width: 330px; aspect-ratio: 9 / 16; border: 0; border-radius: 14px; display: block; margin: 0 auto; background: #000; }
 .tt-open { text-align: center; margin-top: 6px; }
 .tt-loading { padding: 16px; text-align: center; color: var(--text-dim); font-size: 13.5px; }
+
+/* ---------- Card tools (favourite / annotate) ---------- */
+.note-card { position: relative; }
+.card-tools { position: absolute; top: 10px; right: 10px; display: flex; gap: 8px; z-index: 2; }
+.card-tool {
+  width: 38px; height: 38px; border-radius: 50%;
+  border: 1px solid var(--card-edge); background: #14151dcc;
+  color: var(--text-dim); cursor: pointer;
+  display: grid; place-items: center;
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+}
+.card-tool:active { background: #ffffff14; }
+.card-tool.on { color: var(--accent1); border-color: #ffb34766; background: #ffb34718; }
+
+/* ---------- Annotations ---------- */
+.note-anno {
+  margin-top: 16px; padding: 12px 14px;
+  border-left: 3px solid var(--accent1);
+  background: #ffb34712; border-radius: 10px;
+  font-size: 15px; line-height: 1.5;
+}
+.anno-label {
+  display: block; color: var(--accent1);
+  font-size: 11.5px; font-weight: 700; letter-spacing: .8px;
+  margin-bottom: 5px;
+}
+.anno-head { margin: 4px 2px 12px; font-size: 16.5px; }
+.anno-text {
+  width: 100%; background: var(--bg1); color: var(--text);
+  border: 1px solid var(--card-edge); border-radius: 12px;
+  padding: 12px 14px; font: inherit; font-size: 15px; resize: vertical;
+}
+.anno-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 14px; }
+.anno-save { padding: 12px 30px; }
+.danger-text { color: var(--danger); }

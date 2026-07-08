@@ -55,9 +55,11 @@ const S = {
   mediaURLs: [],             // objectURLs to revoke on re-render
   seen: {},                  // id -> times shown (drives soft weighting)
   boosted: new Set(),        // ids the user boosted (higher draw weight)
+  favourites: [],            // ordered ids — hard cap 20, stays a shortlist
+  annotations: {},           // id -> your own note text
 };
 
-const APP_VERSION = "v8";
+const APP_VERSION = "v9";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -74,14 +76,17 @@ async function saveKV(key, val) { await idbPut("kv", val, key); }
 window.addEventListener("DOMContentLoaded", init);
 async function init() {
   _db = await openDB();
-  const [susp, flag, act, imp, seen, boost] = await Promise.all([
+  const [susp, flag, act, imp, seen, boost, favs, annos] = await Promise.all([
     idbGet("kv", "suspended"), idbGet("kv", "flagged"),
     idbGet("kv", "activeLabels"), idbGet("kv", "importedLabels"),
     idbGet("kv", "seenCounts"), idbGet("kv", "boosted"),
+    idbGet("kv", "favourites"), idbGet("kv", "annotations"),
   ]);
   S.suspended = new Set(susp || []);
   S.seen = seen || {};
   S.boosted = new Set(boost || []);
+  S.favourites = favs || [];
+  S.annotations = annos || {};
   S.flagged = new Set(flag || []);
   S.activeLabels = new Set(act || []);
   S.importedLabels = imp || [];
@@ -178,7 +183,7 @@ function nextNote(animate = true) {
     $("noteMeta").innerHTML = "";
     $("noteBody").innerHTML = `<p style="color:var(--text-dim);text-align:center;padding:30px 0">
       ${S.activeLabels.size ? "Nothing in rotation — all notes here are suspended." : "Select at least one label above to start."}</p>`;
-    updateBoostBtn();
+    updateCardTools();
     return;
   }
   let id;
@@ -195,7 +200,7 @@ function prevNote() {
 }
 function showNote(id, anim) {
   S.currentId = id;
-  updateBoostBtn();
+  updateCardTools();
   const card = $("noteCard");
   if (anim) {
     card.classList.add("leaving");
@@ -325,6 +330,8 @@ async function renderNote(note) {
     ).join("") + `</div>`;
   }
   if (note.text) html += `<div>${linkify(note.text)}</div>`;
+  const anno = S.annotations[note.id];
+  if (anno) html += `<div class="note-anno"><span class="anno-label">✎ YOUR NOTE</span>${linkify(anno)}</div>`;
   $("noteBody").innerHTML = html;
 
   /* links (embeds) */
@@ -433,6 +440,55 @@ async function toggleBoost() {
 function updateBoostBtn() {
   $("btnBoost").classList.toggle("boost-on", !!(S.currentId && S.boosted.has(S.currentId)));
 }
+function updateCardTools() {
+  updateBoostBtn();
+  const id = S.currentId;
+  $("btnFav").classList.toggle("on", !!(id && S.favourites.includes(id)));
+  $("btnAnno").classList.toggle("on", !!(id && S.annotations[id]));
+}
+
+/* ---------------- favourites (hard cap 20 — a shortlist, not another endless list) ---------------- */
+const FAV_MAX = 20;
+async function toggleFav() {
+  const id = S.currentId;
+  if (!id) return;
+  const i = S.favourites.indexOf(id);
+  if (i >= 0) {
+    S.favourites.splice(i, 1);
+    toast(`Removed from favourites (${S.favourites.length}/${FAV_MAX})`);
+  } else if (S.favourites.length >= FAV_MAX) {
+    toast(`Favourites is full (${FAV_MAX}/${FAV_MAX}) — remove some in the menu first`);
+    return;
+  } else {
+    S.favourites.push(id);
+    toast(S.favourites.length === FAV_MAX
+      ? `Added — favourites is now FULL (${FAV_MAX}/${FAV_MAX}). Remove notes to add new ones.`
+      : `Added to favourites (${S.favourites.length}/${FAV_MAX})`);
+  }
+  await saveKV("favourites", S.favourites);
+  updateCardTools();
+}
+
+/* ---------------- personal annotations ---------------- */
+function openAnno() {
+  if (!S.currentId) return;
+  $("annoText").value = S.annotations[S.currentId] || "";
+  $("annoDelete").hidden = !S.annotations[S.currentId];
+  $("annoSheet").hidden = false; $("annoBackdrop").hidden = false;
+  $("annoText").focus();
+}
+function closeAnno() { $("annoSheet").hidden = true; $("annoBackdrop").hidden = true; }
+async function saveAnno() {
+  const id = S.currentId;
+  if (!id) return closeAnno();
+  const t = $("annoText").value.trim();
+  if (t) S.annotations[id] = t; else delete S.annotations[id];
+  await saveKV("annotations", S.annotations);
+  closeAnno();
+  renderNote(S.notes.get(id));
+  updateCardTools();
+  toast(t ? "Your note is saved" : "Your note was removed");
+}
 
 let _toastTimer = null;
 function toast(msg, undoable = false) {
@@ -448,6 +504,7 @@ function hideToast() { $("toast").hidden = true; }
 function openSheet() {
   $("suspCount").textContent = S.suspended.size;
   $("flagCount").textContent = S.flagged.size;
+  $("favCount").textContent = `${S.favourites.length}/${FAV_MAX}`;
   $("aboutStats").textContent =
     `Spark ${APP_VERSION} · ${S.notes.size} notes stored · ${pool().length} in rotation · ${S.boosted.size} boosted · on-device`;
   $("sheet").hidden = false; $("sheetBackdrop").hidden = false;
@@ -461,10 +518,13 @@ function noteSnippet(n) {
 }
 async function openList(mode) {
   closeSheet();
-  const ids = [...(mode === "flagged" ? S.flagged : S.suspended)];
-  $("listTitle").textContent = mode === "flagged" ? "Flagged for deletion" : "Suspended notes";
+  const ids = mode === "flagged" ? [...S.flagged] : mode === "favourites" ? [...S.favourites] : [...S.suspended];
+  $("listTitle").textContent = mode === "flagged" ? "Flagged for deletion"
+    : mode === "favourites" ? `Favourites (${S.favourites.length}/${FAV_MAX})` : "Suspended notes";
   $("listHint").textContent = mode === "flagged"
     ? "These are suspended here AND on your cleanup list. Copy a note's text, search it in Google Keep, delete it there, then tap ✓ Done. Notes stay hidden in Spark either way."
+    : mode === "favourites"
+    ? "Your hand-picked best-of — capped at 20 so it stays a shortlist, not another endless list."
     : "Suspended notes never appear in rotation — even after future imports. Restore puts one back.";
   $("btnCopyAll").hidden = mode !== "flagged";
   const wrap = $("listItems");
@@ -501,6 +561,21 @@ async function openList(mode) {
         toast("Removed from cleanup list");
       };
       actions.append(bCopy, bDone);
+    } else if (mode === "favourites") {
+      const bView = document.createElement("button");
+      bView.className = "text-btn"; bView.textContent = "View";
+      bView.onclick = () => { $("listView").hidden = true; showNote(id, "next"); };
+      const bRemove = document.createElement("button");
+      bRemove.className = "text-btn"; bRemove.textContent = "Remove";
+      bRemove.onclick = async () => {
+        S.favourites = S.favourites.filter(f => f !== id);
+        await saveKV("favourites", S.favourites);
+        item.remove();
+        $("listTitle").textContent = `Favourites (${S.favourites.length}/${FAV_MAX})`;
+        updateCardTools();
+        toast(`Removed (${S.favourites.length}/${FAV_MAX})`);
+      };
+      actions.append(bView, bRemove);
     } else {
       const bRestore = document.createElement("button");
       bRestore.className = "text-btn"; bRestore.textContent = "Restore";
@@ -525,6 +600,7 @@ function downloadBackup() {
     suspended: [...S.suspended], flagged: [...S.flagged],
     activeLabels: [...S.activeLabels], importedLabels: S.importedLabels,
     boosted: [...S.boosted], seenCounts: S.seen,
+    favourites: [...S.favourites], annotations: S.annotations,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
@@ -540,16 +616,45 @@ async function restoreBackup(file) {
     for (const id of data.suspended || []) S.suspended.add(id);
     for (const id of data.flagged || []) S.flagged.add(id);
     for (const id of data.boosted || []) S.boosted.add(id);
+    for (const id of data.favourites || [])
+      if (!S.favourites.includes(id) && S.favourites.length < FAV_MAX) S.favourites.push(id);
+    if (data.annotations) S.annotations = Object.assign({}, data.annotations, S.annotations);
     if (data.seenCounts) S.seen = Object.assign({}, data.seenCounts, S.seen);
     if (data.activeLabels) S.activeLabels = new Set(data.activeLabels);
     await Promise.all([
       saveKV("suspended", [...S.suspended]), saveKV("flagged", [...S.flagged]),
       saveKV("activeLabels", [...S.activeLabels]),
       saveKV("boosted", [...S.boosted]), saveKV("seenCounts", S.seen),
+      saveKV("favourites", S.favourites), saveKV("annotations", S.annotations),
     ]);
     refreshHome(true);
     toast("Backup restored");
   } catch (e) { toast("Couldn't read that backup file"); }
+}
+
+/* ---------------- check for updates (beats the 10-min Pages cache) ---------------- */
+async function checkForUpdates() {
+  toast("Checking for updates…");
+  try {
+    const r = await fetch("./app.js?upd=" + Date.now(), { cache: "no-store" });
+    if (!r.ok) throw 0;
+    const m = (await r.text()).match(/APP_VERSION\s*=\s*"([^"]+)"/);
+    if (!m) throw 0;
+    if (m[1] === APP_VERSION) { toast(`You're on the latest version (${APP_VERSION})`); return; }
+    toast(`Update ${m[1]} found — installing…`);
+    /* force-refresh the shell files past the HTTP cache, then reload */
+    await Promise.all(
+      ["./", "./index.html", "./app.css", "./app.js", "./sw.js", "./manifest.webmanifest"]
+        .map(u => fetch(u, { cache: "reload" }).catch(() => {}))
+    );
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg) await reg.update();
+    } catch {}
+    setTimeout(() => location.reload(), 600);
+  } catch {
+    toast("Couldn't check — are you online?");
+  }
 }
 
 /* ---------------- article reader ---------------- */
@@ -678,7 +783,7 @@ async function scanZip(file) {
     if (i % 25 === 0) {
       const _sec = (performance.now() - _t0) / 1000;
       const _rate = _sec > 0.2 ? Math.round(i / _sec) : 0;
-      setProgress(`Scanning notes… ${i}/${jsonEntries.length} · ${_rate}/s · BUILD 7`, 0.05 + 0.55 * (i / jsonEntries.length));
+      setProgress(`Scanning notes… ${i}/${jsonEntries.length} · ${_rate}/s · BUILD 9`, 0.05 + 0.55 * (i / jsonEntries.length));
       await new Promise(r => setTimeout(r, 0));
     }
     let j;
@@ -811,6 +916,11 @@ async function wipeAll() {
 function wireEvents() {
   $("btnNext").onclick = () => nextNote();
   $("btnBoost").onclick = toggleBoost;
+  $("btnFav").onclick = toggleFav;
+  $("btnAnno").onclick = openAnno;
+  $("annoSave").onclick = saveAnno;
+  $("annoDelete").onclick = () => { $("annoText").value = ""; saveAnno(); };
+  $("annoBackdrop").onclick = closeAnno;
   $("btnSuspend").onclick = () => suspendCurrent(false);
   $("btnFlag").onclick = () => suspendCurrent(true);
   $("btnMenu").onclick = openSheet;
@@ -845,6 +955,8 @@ function wireEvents() {
       else if (a === "flagged") openList("flagged");
       else if (a === "backup") { closeSheet(); downloadBackup(); }
       else if (a === "restore") { closeSheet(); $("stateInput").click(); }
+      else if (a === "favourites") openList("favourites");
+      else if (a === "update") { closeSheet(); checkForUpdates(); }
       else if (a === "wipe") { closeSheet(); wipeAll(); }
     };
   });
@@ -871,7 +983,8 @@ function wireEvents() {
 
   /* keyboard (desktop testing) */
   document.addEventListener("keydown", (e) => {
-    if (e.target.tagName === "INPUT" || !$("importView").hidden || !$("readerView").hidden) return;
+    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" ||
+        !$("importView").hidden || !$("readerView").hidden || !$("annoSheet").hidden) return;
     if (e.key === " " || e.key === "ArrowRight") { e.preventDefault(); nextNote(); }
     if (e.key === "ArrowLeft") prevNote();
   });
