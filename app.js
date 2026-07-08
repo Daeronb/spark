@@ -59,9 +59,10 @@ const S = {
   annotations: {},           // id -> your own note text
   loadouts: [null, null, null], // 3 saved label combos (arrays) or null
   viewHistory: [],           // last 50 viewed note ids, most recent first
+  chipsWrap: false,          // label chips: one scrolling line (false) or full wrap (true)
 };
 
-const APP_VERSION = "v10";
+const APP_VERSION = "v11";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -78,12 +79,12 @@ async function saveKV(key, val) { await idbPut("kv", val, key); }
 window.addEventListener("DOMContentLoaded", init);
 async function init() {
   _db = await openDB();
-  const [susp, flag, act, imp, seen, boost, favs, annos, louts, vhist] = await Promise.all([
+  const [susp, flag, act, imp, seen, boost, favs, annos, louts, vhist, cwrap] = await Promise.all([
     idbGet("kv", "suspended"), idbGet("kv", "flagged"),
     idbGet("kv", "activeLabels"), idbGet("kv", "importedLabels"),
     idbGet("kv", "seenCounts"), idbGet("kv", "boosted"),
     idbGet("kv", "favourites"), idbGet("kv", "annotations"),
-    idbGet("kv", "loadouts"), idbGet("kv", "viewHistory"),
+    idbGet("kv", "loadouts"), idbGet("kv", "viewHistory"), idbGet("kv", "chipsWrap"),
   ]);
   S.suspended = new Set(susp || []);
   S.seen = seen || {};
@@ -92,6 +93,7 @@ async function init() {
   S.annotations = annos || {};
   S.loadouts = Array.isArray(louts) && louts.length === 3 ? louts : [null, null, null];
   S.viewHistory = vhist || [];
+  S.chipsWrap = !!cwrap;
   S.flagged = new Set(flag || []);
   S.activeLabels = new Set(act || []);
   S.importedLabels = imp || [];
@@ -143,6 +145,7 @@ function refreshHome(fresh) {
   $("viewNote").hidden = !has;
   $("actionBar").hidden = !has;
   $("chipsRow").hidden = !has;
+  $("loadoutRow").hidden = !has;
   if (!has) return;
   renderChips();
   const p = pool();
@@ -179,29 +182,67 @@ async function applyLoadout(i) {
   toast(`Loadout ${i + 1} applied`);
   refreshHome(false);
 }
-function makeSlotBtn(i) {
-  const b = document.createElement("button");
-  const lo = S.loadouts[i];
-  b.className = "chip chip-slot" + (lo ? "" : " empty") + (lo && sameSet(lo, S.activeLabels) ? " active" : "");
-  b.textContent = String(i + 1);
-  b.title = lo ? `Loadout ${i + 1}: ${lo.join(", ")} — hold to overwrite` : `Empty — tap or hold to save current selection`;
+/* shared tap-vs-hold wiring: hold ~0.6s triggers onHold, otherwise onTap */
+function wireHold(b, onTap, onHold) {
   let timer = null, held = false;
-  const start = () => { held = false; timer = setTimeout(() => { held = true; saveLoadout(i); }, 600); };
+  const start = () => { held = false; timer = setTimeout(() => { held = true; onHold(); }, 600); };
   const cancel = () => clearTimeout(timer);
   b.onpointerdown = start;
-  b.onpointerup = () => { cancel(); if (!held) applyLoadout(i); };
+  b.onpointerup = () => { cancel(); if (!held) onTap(); };
   b.onpointerleave = cancel;
   b.onpointercancel = cancel;
   b.oncontextmenu = (e) => e.preventDefault(); // no long-press menu on Android
   b.onclick = (e) => e.preventDefault();       // handled via pointer events
+}
+function makeSlotBtn(i) {
+  const b = document.createElement("button");
+  const lo = S.loadouts[i];
+  b.className = "chip chip-slot" + (lo ? "" : " empty") + (lo && sameSet(lo, S.activeLabels) ? " active" : "");
+  b.textContent = `Loadout ${i + 1}`;
+  b.title = lo ? `${lo.join(", ")} — tap to apply, hold to overwrite` : `Empty — tap or hold to save current selection`;
+  wireHold(b, () => applyLoadout(i), () => saveLoadout(i));
+  return b;
+}
+function makeAllOffBtn() {
+  const b = document.createElement("button");
+  b.className = "chip chip-alloff";
+  b.textContent = "✕ All off";
+  b.title = "Hold to switch every label off (loadouts stay saved)";
+  wireHold(b,
+    () => toast("Hold ✕ to switch all labels off"),
+    async () => {
+      if (!S.activeLabels.size) { toast("All labels are already off"); return; }
+      S.activeLabels.clear();
+      await saveKV("activeLabels", []);
+      toast("All labels off — tap the ones you want");
+      refreshHome(false);
+    });
+  return b;
+}
+function makeWrapToggle() {
+  const b = document.createElement("button");
+  b.className = "chip chip-expand" + (S.chipsWrap ? " open" : "");
+  b.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4Z"/></svg>`;
+  b.title = S.chipsWrap ? "Collapse labels to one line" : "Show all labels at once";
+  b.onclick = async () => {
+    S.chipsWrap = !S.chipsWrap;
+    await saveKV("chipsWrap", S.chipsWrap);
+    renderChips();
+  };
   return b;
 }
 
 function renderChips() {
+  const lrow = $("loadoutRow");
+  lrow.innerHTML = "";
+  for (let i = 0; i < 3; i++) lrow.appendChild(makeSlotBtn(i));
+  lrow.appendChild(makeAllOffBtn());
+
   const counts = labelCounts();
   const row = $("chipsRow");
+  row.classList.toggle("wrap", S.chipsWrap);
   row.innerHTML = "";
-  for (let i = 0; i < 3; i++) row.appendChild(makeSlotBtn(i));
+  row.appendChild(makeWrapToggle());
   const names = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
   for (const name of names) {
     const b = document.createElement("button");
@@ -493,11 +534,40 @@ async function toggleBoost() {
 function updateBoostBtn() {
   $("btnBoost").classList.toggle("boost-on", !!(S.currentId && S.boosted.has(S.currentId)));
 }
+function noteAge(n) {
+  if (!n.created) return "";
+  const days = (Date.now() - n.created) / 864e5;
+  if (days < 30) return "new";
+  if (days < 365) return Math.round(days / 30.44) + "mo";
+  const y = days / 365.25;
+  return (y < 10 ? y.toFixed(1).replace(/\.0$/, "") : Math.round(y)) + "y";
+}
+function keepQuery(n) {
+  const first = (s) => (s || "").trim().split(/\s+/).slice(0, 6).join(" ");
+  if ((n.title || "").trim()) return first(n.title);
+  const line = (n.text || "").split("\n").find(l => l.trim());
+  if (line) return first(line);
+  return first(n.list && n.list[0] && n.list[0].text);
+}
+function findInKeep() {
+  const n = S.currentId && S.notes.get(S.currentId);
+  if (!n) return;
+  const q = keepQuery(n);
+  if (!q) { toast("This note has no text to search for"); return; }
+  window.open("https://keep.google.com/#search/text%3D" + encodeURIComponent(q), "_blank");
+}
 function updateCardTools() {
   updateBoostBtn();
   const id = S.currentId;
   $("btnFav").classList.toggle("on", !!(id && S.favourites.includes(id)));
   $("btnAnno").classList.toggle("on", !!(id && S.annotations[id]));
+  const n = id ? S.notes.get(id) : null;
+  const seen = n ? (S.seen[id] || 0) : 0;
+  $("ctSeen").textContent = n ? seen + "×" : "";
+  $("ctSeen").title = `Shown ${seen} time${seen === 1 ? "" : "s"}`;
+  $("ctAge").textContent = n ? noteAge(n) : "";
+  $("ctAge").title = n && n.created ? "Created " + new Date(n.created).toLocaleDateString() : "";
+  $("btnKeep").style.display = n && keepQuery(n) ? "" : "none";
 }
 
 /* ---------------- favourites (hard cap 20 — a shortlist, not another endless list) ---------------- */
@@ -852,7 +922,7 @@ async function scanZip(file) {
     if (i % 25 === 0) {
       const _sec = (performance.now() - _t0) / 1000;
       const _rate = _sec > 0.2 ? Math.round(i / _sec) : 0;
-      setProgress(`Scanning notes… ${i}/${jsonEntries.length} · ${_rate}/s · BUILD 10`, 0.05 + 0.55 * (i / jsonEntries.length));
+      setProgress(`Scanning notes… ${i}/${jsonEntries.length} · ${_rate}/s · BUILD 11`, 0.05 + 0.55 * (i / jsonEntries.length));
       await new Promise(r => setTimeout(r, 0));
     }
     let j;
@@ -987,6 +1057,7 @@ function wireEvents() {
   $("btnBoost").onclick = toggleBoost;
   $("btnFav").onclick = toggleFav;
   $("btnAnno").onclick = openAnno;
+  $("btnKeep").onclick = findInKeep;
   $("annoSave").onclick = saveAnno;
   $("annoDelete").onclick = () => { $("annoText").value = ""; saveAnno(); };
   $("annoBackdrop").onclick = closeAnno;
@@ -1059,4 +1130,4 @@ function wireEvents() {
     if (e.key === "ArrowLeft") prevNote();
   });
 }
-/* eof — v10 */
+/* eof — v11 */
